@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>数字人与表情屏联动台</title>
+    <meta name="description" content="一套信号同时驱动 3D 数字人和机器人表情屏：状态、表情标签、viseme 口型、视线按 /face/cmd 消息实时同步，附美术与硬件接口约定">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+<div class="app" id="app">
+  <main class="stage" id="stage" aria-label="数字人视口">
+    <canvas id="c"></canvas>
+    <div class="hud hud-top">
+      <h1>数字人 · 表情屏联动台</h1>
+      <div class="sub" id="sub">载入中…</div>
+      <div class="sub">拖动旋转 · 滚轮或双指适度缩放 · 镜头按钮复位</div>
+    </div>
+    <div class="cam" role="group" aria-label="镜头">
+      <button class="btn" type="button" data-cam="full" aria-pressed="false">全身</button>
+      <button class="btn" type="button" data-cam="half" aria-pressed="true">半身</button>
+      <button class="btn" type="button" data-cam="close" aria-pressed="false">特写</button>
+    </div>
+    <div class="caption" id="caption" hidden><span class="done" id="capDone"></span><span class="todo" id="capTodo"></span></div>
+    <div class="hud hud-bottom">
+      <span>状态 <b id="roState">待机</b></span>
+      <span>口型 <b id="roVis">sil</b></span>
+      <span>注视 <b id="roGaze">+0° / +0°</b></span>
+      <span>眨眼 <b id="roBlink">0</b></span>
+      <span>声音 <b id="roVoice">—</b></span>
+    </div>
+    <div class="face-pip" id="facePip" aria-label="机器人表情屏"><canvas id="face"></canvas><span class="cap">机器人表情屏</span><span class="link">同一套信号 · /face/cmd</span></div>
+    <div class="overlay loading" id="loading">正在载入形象…</div>
+    <div class="overlay drop" id="dropOverlay" hidden>松开即可添加<br>.glb 作为新形象 · 音频文件驱动口型</div>
+  </main>
+
+  <aside class="panel" aria-label="控制面板">
+    <section class="block" aria-labelledby="h-av">
+      <h2 id="h-av">形象 <span id="avCount">1 个</span></h2>
+      <div class="avatars" id="avatars"></div>
+      <details class="add" id="addBox">
+        <summary>添加你的形象（.glb）</summary>
+        <div class="form">
+          <label for="addName">名称</label><input type="text" id="addName" value="我的形象">
+          <span>性别</span>
+          <div class="radios" role="radiogroup" aria-label="性别">
+            <label><input type="radio" name="addGender" value="female" checked> 女</label>
+            <label><input type="radio" name="addGender" value="male"> 男</label>
+          </div>
+          <span></span><button class="btn" type="button" id="addPick">选择文件…</button>
+        </div>
+        <input type="file" id="modelInput" accept=".glb,.gltf,.vrm,model/gltf-binary" class="visually-hidden">
+        <p class="small" style="margin-top:8px">需要 Mixamo / VRoid / CC4 骨架；形象带 ARKit 52 或 15 个 viseme 形态键时口型最好。也可以直接把 .glb 拖进视口。</p>
+      </details>
+      <p class="note" id="modelNote" role="status"></p>
+    </section>
+
+    <section class="block" aria-labelledby="h-chat">
+      <h2 id="h-chat">AI 对话 <span id="chatState">连接中…</span></h2>
+      <div class="log" id="chatLog" aria-live="polite"></div>
+      <form class="row" id="chatForm">
+        <label for="chatInput" class="visually-hidden">对数字人说</label>
+        <input type="text" id="chatInput" maxlength="4000" placeholder="输入一句话，回车发送（中文或英文）" autocomplete="off" disabled>
+        <button class="btn primary" type="submit" id="bSend" disabled>发送</button>
+      </form>
+      <div class="row">
+        <button class="btn" type="button" id="bTalk" aria-pressed="false" disabled>按住说话</button>
+        <button class="btn" type="button" id="bClear" disabled>清空对话</button>
+      </div>
+      <p class="small" id="chatInfo"></p>
+      <p class="small">按住说话，松开发送，单次最多 30 秒。语音会发送至 Cloudflare 识别；表情屏为浏览器模拟，口型为估算。</p>
+      <p class="note" id="chatNote" role="status"></p>
+    </section>
+
+    <section class="block" aria-labelledby="h-say">
+      <h2 id="h-say">说话 <span id="sayState">空闲</span></h2>
+      <label for="sayText" class="visually-hidden">要说的话</label>
+      <textarea id="sayText"></textarea>
+      <div class="grid2">
+        <label class="field" for="engine">语音引擎
+          <select id="engine">
+            <option value="browser">浏览器语音</option>
+            <option value="synth">离线合成音节</option>
+            <option value="cloud">云端 TTS（未配置）</option>
+          </select>
+        </label>
+        <label class="field" for="voiceSel">声音
+          <select id="voiceSel"><option value="">自动（按性别）</option></select>
+        </label>
+      </div>
+      <label class="slider" for="rate">语速 <input type="range" id="rate" min="0.7" max="1.4" step="0.05" value="1"> <output id="rateOut" for="rate">1.00</output></label>
+      <label class="slider" for="pitch">音高 <input type="range" id="pitch" min="0.6" max="1.5" step="0.05" value="1"> <output id="pitchOut" for="pitch">1.00</output></label>
+      <p class="small">切换形象会自动匹配中英文男声或女声。声音选择仅用于系统语音；云端音高调节会同时改变播放速度，默认保持原声。</p>
+      <p class="small">口型按原文音节与音频发声段对时；系统语音使用字词边界校准。当前云端接口未提供逐音素时间戳，精确度仍有一定限制。</p>
+      <div class="row">
+        <button class="btn primary" type="button" id="bSay">说话</button>
+        <button class="btn" type="button" id="bStop" disabled>停止</button>
+        <button class="btn" type="button" id="bAudio">用音频文件</button>
+        <input type="file" id="audioInput" accept="audio/*,.mp3,.wav,.m4a,.ogg" class="visually-hidden">
+      </div>
+      <p class="small">方括号是动作标签，说到那个字时触发：<code>[wave] [explain] [shrug] [point] [bow] [nod] [shake]</code> 和表情 <code>[smile] [surprise] [frown] [doubt] [neutral]</code>。</p>
+      <p class="note" id="sayNote" role="status"></p>
+    </section>
+
+    <section class="block" aria-labelledby="h-act">
+      <h2 id="h-act">状态与动作 <span>程序化生成</span></h2>
+      <div class="seg" role="group" aria-label="状态">
+        <button class="btn" type="button" data-state="idle" aria-pressed="true">待机</button>
+        <button class="btn" type="button" data-state="listening" aria-pressed="false">倾听</button>
+        <button class="btn" type="button" data-state="thinking" aria-pressed="false">思考</button>
+      </div>
+      <div class="chips" role="group" aria-label="手势">
+        <button class="btn" type="button" data-gesture="wave">挥手</button>
+        <button class="btn" type="button" data-gesture="explain">讲解</button>
+        <button class="btn" type="button" data-gesture="shrug">耸肩</button>
+        <button class="btn" type="button" data-gesture="point">指向</button>
+        <button class="btn" type="button" data-gesture="bow">鞠躬</button>
+        <button class="btn" type="button" data-gesture="nod">点头</button>
+        <button class="btn" type="button" data-gesture="shake">摇头</button>
+      </div>
+      <div class="chips" role="group" aria-label="表情">
+        <button class="btn" type="button" data-expr="neutral" aria-pressed="true">平静</button>
+        <button class="btn" type="button" data-expr="smile" aria-pressed="false">微笑</button>
+        <button class="btn" type="button" data-expr="surprise" aria-pressed="false">惊讶</button>
+        <button class="btn" type="button" data-expr="frown" aria-pressed="false">不满</button>
+        <button class="btn" type="button" data-expr="doubt" aria-pressed="false">疑惑</button>
+      </div>
+      <div class="toggles">
+        <label class="toggle" for="tGaze"><input type="checkbox" id="tGaze" checked> 注视跟随</label>
+        <label class="toggle" for="tBlink"><input type="checkbox" id="tBlink" checked> 随机眨眼</label>
+        <label class="toggle" for="tBreath"><input type="checkbox" id="tBreath" checked> 呼吸</label>
+        <label class="toggle" for="tSway"><input type="checkbox" id="tSway" checked> 待机微动</label>
+      </div>
+    </section>
+
+    <section class="block" aria-labelledby="h-face">
+      <h2 id="h-face">机器人表情屏 <span id="faceSum">同一套信号驱动</span></h2>
+      <p class="small">数字人的状态、表情标签、口型和视线，按 <code>/face/cmd</code> 消息实时发给视口右上角的机器人表情屏；屏端按情绪、口型、视线、待机四层叠加渲染。</p>
+      <div class="face-top">
+        <div class="seg2" role="group" aria-label="屏幕形状">
+          <button class="btn" type="button" data-shape="round" aria-pressed="true">圆屏</button>
+          <button class="btn" type="button" data-shape="wide" aria-pressed="false">横屏</button>
+        </div>
+        <label class="toggle" for="tPip"><input type="checkbox" id="tPip" checked> 显示</label>
+        <label class="toggle" for="tBones"><input type="checkbox" id="tBones"> 骨骼与插槽</label>
+      </div>
+      <dl class="layers4" aria-label="表情屏四层状态">
+        <dt><i id="fi-emotion"></i>情绪层</dt><dd id="fl-emotion">—</dd>
+        <dt><i id="fi-mouth"></i>口型层</dt><dd id="fl-mouth">—</dd>
+        <dt><i id="fi-gaze"></i>视线层</dt><dd id="fl-gaze">—</dd>
+        <dt><i id="fi-idle"></i>待机层</dt><dd id="fl-idle">—</dd>
+      </dl>
+      <div class="chips" role="group" aria-label="屏端事件">
+        <button class="btn" type="button" data-fev="sleep">睡眠</button>
+        <button class="btn err" type="button" data-fev="error">故障</button>
+        <button class="btn" type="button" data-fev="clear">清除故障</button>
+      </div>
+      <p class="small">这三个只发给表情屏。故障优先级最高，只接受「清除故障」；开心、惊讶这类反应 1.8–3 秒后自动回落。</p>
+
+      <div class="row"><button class="btn primary" type="button" id="bLinkDemo">播放联动示例</button><span class="small grow">数字人说一段带标签的话，看两边同步</span></div>
+      <div class="seq" id="seq" aria-label="当前这段话的事件时间轴"><span class="empty" id="seqEmpty">说话时，这里按时间显示这段话里的表情和动作标签</span><span class="ph" id="seqPh"></span></div>
+      <label class="slider" for="lead">提前 <input type="range" id="lead" min="0" max="200" step="10" value="80"> <output id="leadOut" for="lead">80 ms</output></label>
+      <p class="small">表情事件按屏幕渲染延迟提前发出，和数字人同一时刻变脸。</p>
+
+      <h2 style="margin-top:4px">消息日志 <span>gaze、viseme 每 0.3 秒记一条</span></h2>
+      <div class="flog" id="flog" aria-live="polite"></div>
+
+      <details class="spec" id="spec">
+        <summary>接口约定（给美术、硬件与后端）</summary>
+        <h3>数字人信号 → 表情屏消息</h3>
+        <div class="spec-list" id="tMap"></div>
+        <h3>消息</h3>
+        <ul id="hwRules"></ul>
+        <div class="spec-list" id="tMsgs" style="margin-top:8px"></div>
+        <h3>情绪优先级</h3>
+        <div class="tw"><table id="tPrios"></table></div>
+        <h3>viseme 到 mouth 插槽</h3>
+        <div class="tw"><table id="tVis"></table></div>
+        <h3>给美术：DragonBones 资源规范</h3>
+        <ul id="artRules"></ul>
+        <div class="tw" style="margin-top:8px"><table id="tBones"></table></div>
+        <div class="spec-list" id="tAnims" style="margin-top:8px"></div>
+        <div class="tw" style="margin-top:8px"><table id="tMouths"></table></div>
+        <div class="row" style="margin-top:10px"><button class="btn" type="button" id="copySpec">复制接口约定（Markdown）</button></div>
+        <p class="small" style="margin-top:8px">表情事件与 <a href="https://jason-g1-review.pages.dev/" target="_blank" rel="noopener">G1 动作审核台</a> 的动作文件共用 events 格式：<code>{"t":1.5,"type":"face","name":"happy"}</code>，到点原样发给表情屏。</p>
+      </details>
+    </section>
+
+    <section class="block" aria-labelledby="h-mon">
+      <h2 id="h-mon">口型 viseme <span id="visMode">—</span></h2>
+      <div class="row" role="group" aria-label="口型检查">
+        <button class="btn" type="button" data-mouth="aa">啊 · 张口</button>
+        <button class="btn" type="button" data-mouth="O">哦 · 圆唇</button>
+        <button class="btn" type="button" data-mouth="I">一 · 展唇</button>
+        <button class="btn" type="button" data-mouth="sil">闭口</button>
+      </div>
+      <p class="small">选择特写检查嘴唇、牙齿和下颌，所选口型会保持；点击闭口结束预览，朗读时自动由语音接管。</p>
+      <div class="eq" id="eq"></div>
+    </section>
+
+    <section class="block" aria-labelledby="h-model">
+      <h2 id="h-model">当前模型 <span id="modelName">—</span></h2>
+      <dl class="kv">
+        <dt>骨骼</dt><dd id="mBones">—</dd>
+        <dt>形态键</dt><dd id="mMorph">—</dd>
+        <dt>眼球</dt><dd id="mEyes">—</dd>
+        <dt>其他</dt><dd id="mExtra">—</dd>
+      </dl>
+      <div class="row"><button class="btn" id="bFlip" type="button">翻转朝向</button></div>
+    </section>
+  </aside>
+</div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

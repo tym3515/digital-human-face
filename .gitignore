@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-single/
+.wrangler/
+*.log
+.env*
+.dev.vars*
+worker-configuration.d.ts
+
+# Private author profile (see worker/profile.example.mjs)
+worker/profile.mjs
+# Local working notes
+*.local.md
+# Experiment inputs and raw sources, not part of the published demo
+assets/beauty/
+assets/modern-cn/
+assets/vroid-sources/*.vrm
+assets/vroid-sources/*.png
+# Historical Rocketbox avatars, no longer used by the app
+public/avatars/rocketbox-*.glb
